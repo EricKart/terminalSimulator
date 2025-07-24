@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive Linux/Git Terminal</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Fira Code', monospace;
+        }
+        #terminal-output::-webkit-scrollbar {
+            width: 8px;
+        }
+        #terminal-output::-webkit-scrollbar-track {
+            background: #1f2937;
+        }
+        #terminal-output::-webkit-scrollbar-thumb {
+            background-color: #4b5563;
+            border-radius: 4px;
+        }
+        .prompt::before {
+            content: 'user@host:~$ ';
+            color: #34d399;
+        }
+        .input-line {
+            display: flex;
+        }
+        #command-input {
+            background: transparent;
+            border: none;
+            outline: none;
+            color: #e5e7eb;
+            flex-grow: 1;
+        }
+        .branch-info {
+            color: #93c5fd;
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-gray-200 flex items-center justify-center h-screen p-4">
+
+    <div class="w-full max-w-4xl h-[90vh] bg-gray-800 rounded-xl shadow-2xl flex flex-col">
+        <div class="bg-gray-700 p-3 flex items-center rounded-t-xl">
+            <div class="flex space-x-2">
+                <div class="w-3 h-3 bg-red-500 rounded-full"></div>
+                <div class="w-3 h-3 bg-yellow-500 rounded-full"></div>
+                <div class="w-3 h-3 bg-green-500 rounded-full"></div>
+            </div>
+            <p class="flex-grow text-center text-sm font-semibold text-gray-300">Linux/Git Simulator</p>
+        </div>
+
+        <div id="terminal-output" class="p-4 flex-grow overflow-y-auto">
+            <!-- Output will be rendered here -->
+        </div>
+
+        <div class="p-4 border-t border-gray-700">
+            <div class="input-line">
+                <span id="prompt" class="prompt"></span>
+                <span id="branch-indicator" class="branch-info ml-2 mr-2"></span>
+                <input type="text" id="command-input" autocomplete="off" autofocus>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    // --- Simulated Git Logic ---
+    class SimulatedGit {
+        constructor(fs) {
+            this.fs = fs; // Reference to the main file system
+            this.initialized = false;
+        }
+
+        init() {
+            if (this.initialized) return 'Reinitialized existing Git repository.';
+            this.initialized = true;
+            this.commits = {};
+            this.branches = { 'main': null };
+            this.HEAD = 'main';
+            this.stagingArea = new Set(); // Set of paths to stage
+            this.repoFiles = {}; // Files in the last commit {path: content}
+            this.fs.set('.git', { type: 'dir', content: {} });
+            return 'Initialized empty Git repository in ./.git/';
+        }
+        
+        add(path) {
+            if (!this.fs.exists(path)) return `fatal: pathspec '${path}' did not match any files`;
+            this.stagingArea.add(path);
+            return '';
+        }
+
+        commit(message) {
+            if (this.stagingArea.size === 0) return 'Nothing to commit, working tree clean.';
+            
+            const parent = this.branches[this.HEAD];
+            const newTree = { ...this.repoFiles };
+            this.stagingArea.forEach(path => {
+                newTree[path] = this.fs.get(path).content;
+            });
+
+            const commitId = this._generateSha({ message, parent, tree: newTree });
+            const newCommit = { id: commitId, message, parent, tree: newTree };
+
+            this.commits[commitId] = newCommit;
+            this.branches[this.HEAD] = commitId;
+            this.repoFiles = newTree;
+            this.stagingArea.clear();
+            return `[${this.HEAD} ${commitId}] ${message}`;
+        }
+
+        log() {
+            if (!this.branches[this.HEAD]) return 'No commits yet.';
+            let output = [];
+            let currentId = this.branches[this.HEAD];
+            while (currentId) {
+                const commit = this.commits[currentId];
+                output.push(`commit ${commit.id} (HEAD -> ${this.HEAD})`);
+                output.push(`Date:   ${new Date().toUTCString()}`);
+                output.push(`\n    ${commit.message}\n`);
+                currentId = commit.parent;
+            }
+            return output.join('\n');
+        }
+
+        status() {
+            let output = [`On branch ${this.HEAD}`];
+            
+            const staged = Array.from(this.stagingArea);
+            if (staged.length > 0) {
+                output.push('\nChanges to be committed:');
+                staged.forEach(f => output.push(`  (new file)  ${f}`));
+            }
+
+            const unstaged = [];
+            const allFiles = this.fs.listAllFiles();
+            allFiles.forEach(path => {
+                const fileContent = this.fs.get(path).content;
+                const repoContent = this.repoFiles[path];
+                if (repoContent !== fileContent && !this.stagingArea.has(path)) {
+                     unstaged.push(`  (modified)  ${path}`);
+                }
+            });
+             if (unstaged.length > 0) {
+                output.push('\nChanges not staged for commit:');
+                output.push(...unstaged);
+            }
+            
+            return output.join('\n');
+        }
+        
+        _generateSha(content) {
+            let hash = 0;
+            const strContent = JSON.stringify(content) + Date.now() + Math.random();
+            for (let i = 0; i < strContent.length; i++) hash = (hash << 5) - hash + strContent.charCodeAt(i), hash |= 0;
+            return Math.abs(hash).toString(16).substring(0, 7);
+        }
+    }
+
+    // --- Simulated File System ---
+    class FileSystem {
+        constructor() {
+            this.root = { type: 'dir', content: {} };
+        }
+        
+        _resolvePath(path, startNode = this.root) {
+            const parts = path.split('/').filter(p => p);
+            let current = startNode;
+            for (const part of parts) {
+                if (current.type !== 'dir' || !current.content[part]) return null;
+                current = current.content[part];
+            }
+            return current;
+        }
+
+        get(path) {
+            return this._resolvePath(path);
+        }
+
+        set(path, node) {
+            const parts = path.split('/').filter(p => p);
+            const filename = parts.pop();
+            const dirPath = parts.join('/');
+            const dir = this._resolvePath(dirPath);
+            if (dir && dir.type === 'dir') {
+                dir.content[filename] = node;
+                return true;
+            }
+            return false;
+        }
+        
+        exists(path) {
+            return this._resolvePath(path) !== null;
+        }
+        
+        remove(path) {
+             const parts = path.split('/').filter(p => p);
+            const filename = parts.pop();
+            const dirPath = parts.join('/');
+            const dir = this._resolvePath(dirPath);
+            if (dir && dir.type === 'dir' && dir.content[filename]) {
+                delete dir.content[filename];
+                return true;
+            }
+            return false;
+        }
+
+        listAllFiles(dir = this.root, prefix = '') {
+            let files = [];
+            for (const name in dir.content) {
+                const path = `${prefix}/${name}`;
+                const node = dir.content[name];
+                if (node.type === 'file') {
+                    files.push(path.substring(1));
+                } else if (node.type === 'dir' && name !== '.git') {
+                    files = files.concat(this.listAllFiles(node, path));
+                }
+            }
+            return files;
+        }
+    }
+
+    // --- Main Terminal Logic ---
+    class Terminal {
+        constructor() {
+            this.outputEl = document.getElementById('terminal-output');
+            this.inputEl = document.getElementById('command-input');
+            this.branchIndicator = document.getElementById('branch-indicator');
+            this.promptEl = document.getElementById('prompt');
+            
+            this.fs = new FileSystem();
+            this.git = new SimulatedGit(this.fs);
+            this.commandHistory = [];
+            this.historyIndex = -1;
+            this.cwd = '/';
+            this.who = 'learner';
+
+            this.inputEl.addEventListener('keydown', e => this.handleInput(e));
+            this.print('Welcome to the Interactive Linux/Git Terminal!');
+            this.print('Type `help` to see available commands.');
+            this.updatePrompt();
+        }
+
+        handleInput(e) {
+            if (e.key === 'Enter') {
+                const command = this.inputEl.value.trim();
+                this.print(`<span class="prompt">${this.promptEl.textContent}</span> ${command}`, true);
+                if (command) {
+                    this.commandHistory.unshift(command);
+                    this.historyIndex = -1;
+                    this.execute(command);
+                }
+                this.inputEl.value = '';
+                this.outputEl.scrollTop = this.outputEl.scrollHeight;
+            } else if (e.key === 'ArrowUp') {
+                 e.preventDefault();
+                 if(this.historyIndex < this.commandHistory.length - 1) this.inputEl.value = this.commandHistory[++this.historyIndex];
+            } else if (e.key === 'ArrowDown') {
+                 e.preventDefault();
+                 if(this.historyIndex > 0) this.inputEl.value = this.commandHistory[--this.historyIndex];
+                 else { this.historyIndex = -1; this.inputEl.value = ''; }
+            }
+        }
+
+        print(message, isHtml = false) {
+            const line = document.createElement('div');
+            line[isHtml ? 'innerHTML' : 'textContent'] = message;
+            this.outputEl.appendChild(line);
+        }
+        
+        updatePrompt() {
+            const pathForPrompt = this.cwd === '/' ? '~' : this.cwd.split('/').pop();
+            this.promptEl.textContent = `${this.who}@host:${pathForPrompt}$ `;
+            this.branchIndicator.textContent = this.git.initialized ? `(${this.git.HEAD})` : '';
+        }
+        
+        _resolveToAbsolutePath(path) {
+            if (path.startsWith('/')) return path;
+            const newPath = this.cwd === '/' ? `/${path}` : `${this.cwd}/${path}`;
+            // Basic .. handling
+            const parts = newPath.split('/').reduce((acc, part) => {
+                if (part === '..') acc.pop();
+                else if (part && part !== '.') acc.push(part);
+                return acc;
+            }, []);
+            return '/' + parts.join('/');
+        }
+
+        execute(commandStr) {
+            const parts = commandStr.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g)?.map(p => p.replace(/^"|"$/g, '')) || [];
+            const command = parts[0];
+            const args = parts.slice(1);
+            let output = `Command not found: ${command}. Type 'help'.`;
+
+            // --- Linux/FS Commands ---
+            if (command === 'help') {
+                output = `Available commands:
+  --- File System ---
+  ls, pwd, cd <dir>, mkdir <dir>, touch <file>
+  cat <file>, echo "..." > <file>, rm <file>, mv <src> <dest>
+  whoami, date, clear, help
+  
+  --- Git Commands ---
+  git init, git add <file>, git commit -m "msg"
+  git log, git status, git branch, git checkout <name>`;
+            } else if (command === 'ls') {
+                const node = this.fs.get(this.cwd);
+                output = Object.keys(node.content).join('  ');
+            } else if (command === 'pwd') {
+                output = this.cwd;
+            } else if (command === 'whoami') {
+                output = this.who;
+            } else if (command === 'date') {
+                output = new Date().toString();
+            } else if (command === 'mkdir' && args[0]) {
+                const newDirPath = this._resolveToAbsolutePath(args[0]);
+                if (this.fs.exists(newDirPath)) output = `mkdir: cannot create directory ‘${args[0]}’: File exists`;
+                else this.fs.set(newDirPath, { type: 'dir', content: {} }), output = '';
+            } else if (command === 'cd' && args[0]) {
+                const newPath = this._resolveToAbsolutePath(args[0]);
+                const node = this.fs.get(newPath);
+                if (node && node.type === 'dir') this.cwd = newPath, output = '';
+                else output = `cd: no such file or directory: ${args[0]}`;
+            } else if (command === 'touch' && args[0]) {
+                const newFilePath = this._resolveToAbsolutePath(args[0]);
+                if (this.fs.exists(newFilePath)) output = ''; // just update timestamp in real fs
+                else this.fs.set(newFilePath, { type: 'file', content: '' }), output = '';
+            } else if (command === 'echo' && args.length >= 2 && args[args.length - 2] === '>') {
+                const content = args.slice(0, -2).join(' ');
+                const filePath = this._resolveToAbsolutePath(args[args.length - 1]);
+                this.fs.set(filePath, { type: 'file', content }), output = '';
+            } else if (command === 'cat' && args[0]) {
+                const filePath = this._resolveToAbsolutePath(args[0]);
+                const node = this.fs.get(filePath);
+                output = node ? node.content : `cat: ${args[0]}: No such file or directory`;
+            } else if (command === 'rm' && args[0]) {
+                const path = this._resolveToAbsolutePath(args[0]);
+                if (this.fs.remove(path)) output = '';
+                else output = `rm: cannot remove '${args[0]}': No such file or directory`;
+            } else if (command === 'mv' && args.length === 2) {
+                const srcPath = this._resolveToAbsolutePath(args[0]);
+                const destPath = this._resolveToAbsolutePath(args[1]);
+                const node = this.fs.get(srcPath);
+                if (node && this.fs.remove(srcPath)) this.fs.set(destPath, node), output = '';
+                else output = `mv: cannot stat '${args[0]}': No such file or directory`;
+            } else if (command === 'clear') {
+                this.outputEl.innerHTML = '', output = '';
+            }
+            // --- Git Commands ---
+            else if (command === 'git') {
+                const gitCommand = args[0];
+                const gitArgs = args.slice(1);
+                
+                if (!this.git.initialized && gitCommand !== 'init') {
+                    output = 'fatal: not a git repository (or any of the parent directories): .git';
+                } else {
+                    switch (gitCommand) {
+                        case 'init': output = this.git.init(); break;
+                        case 'add': output = gitArgs[0] ? this.git.add(this._resolveToAbsolutePath(gitArgs[0])) : 'Nothing specified, nothing added.'; break;
+                        case 'commit': output = (gitArgs[0] === '-m' && gitArgs[1]) ? this.git.commit(gitArgs[1]) : 'Usage: git commit -m "<message>"'; break;
+                        case 'log': output = this.git.log(); break;
+                        case 'status': output = this.git.status(); break;
+                        case 'branch':
+                            if (gitArgs[0]) output = this.git.branches[gitArgs[0]] ? `fatal: A branch named '${gitArgs[0]}' already exists.` : (this.git.branches[gitArgs[0]] = this.git.branches[this.git.HEAD], `Created branch '${gitArgs[0]}'.`);
+                            else output = Object.keys(this.git.branches).map(b => `${b === this.git.HEAD ? '*' : ' '} ${b}`).join('\n');
+                            break;
+                        case 'checkout':
+                            if (gitArgs[0] && this.git.branches[gitArgs[0]]) {
+                                this.git.HEAD = gitArgs[0];
+                                output = `Switched to branch '${gitArgs[0]}'`;
+                            } else output = `error: pathspec '${gitArgs[0]}' did not match any file(s) known to git`;
+                            break;
+                        default: output = `git: '${gitCommand}' is not a git command.`;
+                    }
+                }
+            }
+            
+            if (output) this.print(output);
+            this.updatePrompt();
+        }
+    }
+
+    new Terminal();
+    </script>
+</body>
+</html>
